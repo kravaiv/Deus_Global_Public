@@ -119,7 +119,7 @@ python scripts/index_backtest.py
 To run the bot, you need to configure the token and allowed IDs in the `.env` file:
 ```env
 TELEGRAM_BOT_TOKEN="your_bot_token_here"
-ALLOWED_TELEGRAM_USERS="123456789,987654321"
+ALLOWED_TELEGRAM_USERS="your_telegram_ID_here"
 ```
 Launch the bot:
 ```bash
