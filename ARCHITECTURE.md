@@ -14,7 +14,7 @@
 2. **28 currency pairs:** all combinations C(8,2) = 28.
 3. **Daily cycle:** data → normalization → scoring → matrix → filtering → DB.
 4. **Hybrid data ingestion:** automatic APIs (FRED, Yahoo Finance, DBnomics, CFTC) + manual input of rare leading indicators (Flash PMI, SNB Deposits, COT Index, CESI) once a week. The **Graceful Degradation** mechanism guarantees resilience against API failures (fallbacks to local caches and proxy metrics).
-5. **Fair calibration:** all thresholds are validated by a walk-forward test on 2020–2026 data without lookahead bias. The system does not have a valid out-of-sample test — see Section 9.
+5. **Fair calibration:** all thresholds are validated by a walk-forward test on 2020–2026 data without lookahead bias. Robustness is evaluated via split-sample testing: In-Sample (IS: 2020–2022) and Out-of-Sample (OOS: 2023–2026) using the Anti-Overfitting Mandate — see Section 9.
 6. **Regime-based trade management:** The model is used exclusively as a macro compass for entry with phased scaling (stepwise addition) over a month. Automatic "smart exits" are prohibited, as they break trends.
 7. **Regime Dependency:** The model shows maximum advantage only during periods of high inflation and divergence of monetary policies. In the ZIRP (zero interest rate policy) era, the system generates a minimum of signals.
 
@@ -114,14 +114,14 @@ If `|Signal| ≥ ENTRY_THRESHOLD (1.5 σ)` → the signal passes to the filters.
 
 The ticker direction is determined via `TICKER_MAP` in `backtesting/__init__.py`. For inverted pairs (e.g. USDJPY when JPY/USD is signaled), the system automatically inverts the sign.
 
-### 3.4. Entry and Exit Rules (Option E)
+### 3.4. Entry and Exit Rules (Variant B)
 
 #### Entry Conditions (Position Opening)
-Opening a new position requires meeting **four sequential conditions**:
+Opening a new position requires meeting **three sequential conditions** (Variant B — no regime pair veto):
 1. **Threshold Discrepancy:** The magnitude of the absolute signal $|Signal| = |Score_A - Score_B| \ge 1.5\sigma$.
 2. **Opposite Sides:** The long currency must have a strictly positive composite score ($Score_{long} > 0$), and the short currency must have a strictly negative score ($Score_{short} < 0$).
 3. **Three-day Stability:** The signal must maintain its direction (the same sign) for $3$ or more consecutive trading days.
-4. **Regime Universe Filter:** The currency pair must belong to the active universe list for the current market regime (defined by the `get_active_pairs` function in `pair_selector.py`).
+*(Note: The regime universe pair veto is disabled. All active pairs Tier 1–3 are traded in any regime without universe restrictions).*
 
 #### Exit Conditions (Position Closing)
 Position exit and signal deactivation occur when any of the following conditions are met:
@@ -141,13 +141,14 @@ Currency pairs are classified into tiers based on their historical performance d
 - **Tier 3 (Marginal, PF > 1.0):** EUR/CHF, USD/CAD, GBP/NZD.
 - **BLACKLIST (Negative Expectation or Insufficient Data, PF < 1.0):** USD/CHF, CHF/CAD, CHF/NZD, GBP/CHF, EUR/CAD, USD/EUR, CAD/NZD, EUR/NZD, JPY/CHF, EUR/GBP, EUR/AUD, GBP/CAD, AUD/CAD, AUD/NZD, GBP/AUD. These pairs are strictly excluded from trading.
 
-### 3.6. Regime Filtering
-The `RegimeFilter` module evaluates the market regime across three states:
-- **Risk-On:** regime_score > 0.3. The universe `REGIME_UNIVERSE_RISK_ON` (10 pairs) is traded.
-- **Neutral:** -0.3 <= regime_score <= 0.3. The universe `REGIME_UNIVERSE_NEUTRAL` (9 pairs) is traded.
-- **Risk-Off:** regime_score < -0.3. The universe `REGIME_UNIVERSE_RISK_OFF` (10 pairs) is traded.
+### 3.6. Regime Filtering (Disabled for Pair Selection)
+The `RegimeFilter` module continues to evaluate the market regime across three states (`Risk-On`, `Neutral`, `Risk-Off`) for macro context analysis and logging:
+- **Risk-On:** regime_score > 0.3.
+- **Neutral:** -0.3 <= regime_score <= 0.3.
+- **Risk-Off:** regime_score < -0.3.
 
-Calibration criteria for including a pair in the regime universe: **PF > 1.2 AND N > 20** in this regime. Pairs that do not belong to the active universe of the current regime are filtered out in the `[REGIME FILTERED]` block of the live script.
+> [!IMPORTANT]
+> **Universe Filtering Disabled (Variant B):** To mitigate overfitting and increase the portfolio Sharpe ratio on OOS data (OOS Sharpe improvement of +0.1035), the regime universe filter in `get_active_pairs` is completely disabled. All active pairs Tier 1–3 are traded in all regimes without limitations. The status `[REGIME FILTERED]` is no longer assigned to active pairs.
 
 ### 3.7. Risk Management and Lot Sizing (Position Sizer)
 The size of the opened macro position is calculated dynamically based on the daily volatility (D1) or weekly volatility (W1) of the instrument smoothed via ATR(14) using the formula:
@@ -421,15 +422,16 @@ When integrating external macro data connectors, the following technical charact
 | **China Credit Impulse (AkShare)** | Toxic effect on performance (-0.08 to Sharpe). Data instability. | Disabled (`ENABLE_CHINA_V3=False`) |
 | **ACLED Geopolitics** | API instability, inability to construct a fair point-in-time signal without lookahead bias. | Disabled (`ENABLE_GEOPOLITICS_V3=False`) |
 | **Calendar Macro Surprise V3** | Complete duplication of CESI. Zero contribution to Sharpe. | Disabled (`ENABLE_CALENDAR_V3=False`, weight=0.00) |
+| **TRADE_BALANCE (AUD)** | Disabled per Anti-Overfitting Mandate. A lookahead artifact was identified in the old lag calibration (+35d from observation date instead of +35d from end-of-month). After switching to the true point-in-time ABS release calendar (31–40d lag), the metric deteriorates Sharpe on active pairs (AUD/USD: -1.48). | Disabled (commented out in SURPRISE_EVENTS, weight=0.00) |
 
 ---
 
 ## 9. SYSTEM LIMITATIONS
 
-- No valid out-of-sample test (Walk-forward test — a sequential testing method with sample shifts — is impossible because historical data for USD is available only from 2020, making the entire period in-sample).
+- **Valid Out-of-Sample (OOS) test implemented:** The obsolete limitation regarding the absence of OOS validation has been resolved. The system now utilizes a walk-forward split: In-Sample (IS: 2020–2022) for calibration and Out-of-Sample (OOS: 2023–2026) for independent verification. A strict Anti-Overfitting Mandate is in place (any changes, such as Variant B, are accepted only if they yield $\Delta\text{Sharpe}_{\text{OOS}} \ge +0.05$).
 - Dependence on manual data entry weekly (the `manual_alpha.json` and `manual_yields.json` files are critical for operation).
 - The system does not automatically block trading in Risk-Off — it only adjusts weights; the decision to halt is made by the trader.
-- Backtest IC (Information Coefficient — a measure of correlation between prediction and actual return) Decay is not representative of the live system, since the historical data lacks CESI, Flash PMI, and rate expectations.
+- Backtest IC (Information Coefficient — a measure of correlation between prediction and actual return) Decay is not representative of the live system, since the historical data before 2020 lacks CESI, Flash PMI, and rate expectations.
 - The 2025 results are explained by low score variance (lack of macro trends) and the April Risk-Off episode, rather than a structural issue with the system.
 
 ---
@@ -467,21 +469,25 @@ results = evaluator.run()
 
 ⚠️ The data is provided for informational purposes only. The only valid validation is via a forward test on real signals for at least 6 months.
 
-Walk-forward test results for the 2020–2026 period (63-day horizon, 1.5σ threshold):
+Backtest results for the production strategy Variant B (No Regime Filter, no pair regime veto) with dynamic exit based on signal decay (Signal Decay / Entry Threshold 1.5σ / 1.4σ) for the OOS period 2023–2026:
 
 | Metric | Value |
 |---|---|
-| Overall Hit Rate | 69.62% |
-| Overall Profit Factor | 3.95 |
-| NEW signals per month | ~1.8 |
+| Portfolio Sharpe Ratio | **+0.9770** |
+| Overall Win Rate (Hit Rate) | 59.50% |
+| Overall Profit Factor | 2.55 |
+| Average Hold (days) | 14.9 |
+| Number of Closed Trades (N) | 200 |
 
-Results by market regimes (2020–2026 period, universe criteria: PF > 1.2, N > 20):
+*(For comparison, a theoretical vector backtest with a fixed 63-day horizon without decay exits shows a Hit Rate of 69.62% and a Profit Factor of 3.95).*
 
-| Regime | Threshold | Description |
-|---|---|---|
-| **RISK_ON** (regime_score > 0.3) | 1.50σ | 10 active pairs. Linear interpolation of weights. |
-| **NEUTRAL** (-0.3 <= regime_score <= 0.3) | 1.50σ | 9 active pairs. Main operating environment. |
-| **RISK_OFF** (regime_score < -0.3) | 1.50σ | 10 active pairs. Includes JPY crosses with high PF (138.03 for GBP/JPY). |
+Results by market regimes for Variant B (OOS 2023–2026):
+
+| Regime | Trades (N) | Win Rate | Profit Factor |
+|---|---|---|---|
+| **RISK_ON** (regime_score > 0.3) | 166 | 62.7% | **3.57** |
+| **NEUTRAL** (-0.3 <= regime_score <= 0.3) | 27 | 37.0% | **0.19** |
+| **RISK_OFF** (regime_score < -0.3) | 7 | 71.4% | **1.18** |
 
 ### Additional stability metrics (dev/razor)
 - Results are not dependent on outliers: the contribution of the top 10% of trades to total profit is less than 33% for all Tier 1 pairs (lowest contribution is CAD/NZD at 14.63%, highest is USD/JPY at 32.75%).

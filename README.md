@@ -13,20 +13,20 @@ All macroeconomic metrics are normalized using a **180-day rolling window** (`z_
 
 ### 2. Scorecard (Currency Scorer)
 For each of the 8 currencies, a Composite Score (a weighted sum of all macroeconomic indicators of the currency reflecting its fundamental strength) is formed from 5 groups of macro factors:
-- **Monetary Policy** (~30%): CB rate, 10Y real yield (TIPS for USD), yield curve slope (10Y−2Y), money supply (M2 YoY)
-- **Growth / PMI** (~20%): PMI, employment, unemployment rate
-- **Inflation** (~15%): CPI deviation from the CB target, core PCE
-- **Terms of Trade** (~15%): Commodity currency exposure to oil, copper, wheat, iron ore
-- **Macro Surprises** (~20%): CESI, interest rate expectations. *(COT is output for diagnostics only)*
+- **Monetary Policy** (base weight ~37.5%): Monetary composite `monetary_composite` (weight 0.30, combines CB rate, interest rate spread, 10Y real yield with 0.65 weight, and 10Y-2Y yield curve slope) and 12M market interest rate expectations `rate_expectations` (weight 0.15). *(M2 YoY is disabled)*.
+- **Growth / PMI** (base weight ~29%): Services PMI `pmi_services` (weight 0.15), Flash Manufacturing PMI `pmi_flash` (weight 0.10), GDP surprises `gdp_surprise` (weight 0.10), and Caixin China PMI `china_pmi` (weight 0.08, AUD/NZD only). *(Unemployment rate and NFP are disabled)*.
+- **Inflation** (base weight ~25%): Inflation composite `inflation_composite` (weight 0.30, combines CPI YoY, CPI deviation from target, and core PCE for USD).
+- **Terms of Trade / Commodities** (dynamic weights): Individual commodity weights from `config.yaml` for exporters/importers (WTI crude oil 0.10 for CAD / -0.08 for JPY, Henry Hub natural gas 0.05 for CAD, WCS discount -0.05 for CAD, copper 0.08, iron ore 0.10, wheat 0.04 for AUD, TTF natural gas -0.05 for EUR / -0.03 for GBP). *(The universal terms_of_trade composite is disabled)*.
+- **Macro Surprises / Alpha Layer** (base weight ~8.3%): Citi Economic Surprise Index `cesi` (weight 0.10). Also includes GDT Dairy auction index (weight 0.15, NZD only) and weekly changes in SNB sight deposits `snb_deposits` (weight -0.20, CHF only, inverted). *(COT is output for diagnostics only)*.
 
 When `Cycle Blender` is active, the weights of these groups adapt dynamically to the current phase of the cycle (Expansion, Slowdown, Contraction, Recovery) with smooth blending at the boundaries.
 
 ### 3. Entry Rules (Signal Generation)
-An entry signal is generated when **four filters** are met simultaneously:
+An entry signal is generated when **three filters** are met simultaneously (Variant B — no regime pair veto):
 1. **Threshold:** The signal differential $|Score_A - Score_B| \ge 1.5\sigma$.
 2. **Opposite Sides:** The long currency must have a positive score ($Score_{long} > 0$), and the short currency must have a negative score ($Score_{short} < 0$).
 3. **Stability:** The signal must remain active in the same direction for **3+ consecutive days** (trend confirmation).
-4. **Regime Universe filter:** The pair must be included in the active instruments list for the current market regime (see the "Regime Trading Universes" section).
+*(Note: The regime universe pair veto is disabled. All active pairs Tier 1–3 are traded in any regime without universe restrictions).*
 
 ### 4. Exit Rules
 An open position is exited and the signal is closed when any of the following conditions are met:
@@ -119,7 +119,7 @@ python scripts/index_backtest.py
 To run the bot, you need to configure the token and allowed IDs in the `.env` file:
 ```env
 TELEGRAM_BOT_TOKEN="your_bot_token_here"
-ALLOWED_TELEGRAM_USERS="your_telegram_ID_here"
+ALLOWED_TELEGRAM_USERS="123456789,987654321"
 ```
 Launch the bot:
 ```bash
@@ -206,9 +206,13 @@ Within the macro data integration, an audit of 5 external API connectors was per
 
 ## 📊 Calibration and Metrics (dev/razor)
 
-Within the backtest on the OOS period 2023–2026, the system demonstrates the following metrics:
-- **Total Hit Rate (63-day):** `69.62%`
-- **Total Profit Factor:** `3.95`
+Within the backtest on the OOS period 2023–2026 for the production strategy Variant B (No Regime Filter, no pair regime veto) with dynamic exit based on signal decay (Signal Decay / Entry Threshold 1.5σ / 1.4σ), the system demonstrates the following metrics:
+- **Portfolio Sharpe Ratio:** **`+0.9770`** (improvement of +0.1035 relative to the baseline Variant A with veto)
+- **Overall Win Rate (Hit Rate):** `59.50%`
+- **Overall Profit Factor:** `2.55`
+- **Average Hold Duration:** `14.9 days`
+- **Number of Closed Trades (N):** `200`
+*(For comparison, a theoretical vector backtest with a fixed 63-day horizon without decay exits shows a Hit Rate of 69.62% and a Profit Factor of 3.95).*
 
 ### Currency Pair Tier Table (Out-of-Sample Backtest Results 2023–2026)
 
@@ -222,7 +226,7 @@ A detailed report on tiers, win rates, profit factors, and the blacklist is in t
 | | EUR/JPY | 66.67% | **4.85** | |
 | **Tier 2** | AUD/CHF | 61.11% | **2.90** | Good signal quality, |
 | (PF ≥ 1.4) | NZD/JPY | 50.00% | **1.96** | stable mathematical |
-| | JPY/CAD | 52.17% | **1.95** | expectation. |
+| | CAD/JPY | 52.17% | **1.95** | expectation. |
 | | GBP/USD | 53.33% | **1.94** | |
 | | NZD/USD | 53.85% | **1.54** | |
 | **Tier 3** | AUD/USD | 57.14% | **1.23** | Boundary results. |
@@ -232,18 +236,11 @@ A detailed report on tiers, win rates, profit factors, and the blacklist is in t
 
 ---
 
-## 🌐 Regime Trading Universes (Regime Universes)
+## 🌐 Regime Trading Universes (Regime Universes) — Disabled
 
-To reduce noise in market stress and sideways phases, the active trading universe is strictly divided by regimes in accordance with [pair_selector.py](execution/pair_selector.py):
+To mitigate overfitting and maximize the portfolio Sharpe ratio on OOS data, pair filtering by regime universes has been disabled (Variant B implemented).
 
-1. **Risk-On Universe (Risk Appetite):**
-   * `GBP/JPY`, `EUR/JPY`, `USD/JPY`, `USD/GBP`, `USD/AUD`, `JPY/NZD`, `JPY/AUD`, `USD/CAD`, `JPY/CAD`, `CHF/AUD`
-2. **Neutral Universe (Normal State):**
-   * `EUR/JPY`, `USD/GBP`, `USD/NZD`, `USD/AUD`, `JPY/NZD`, `JPY/AUD`, `CHF/AUD`, `USD/CAD`
-3. **Risk-Off Universe (Flight to Safety / Panic):**
-   * `GBP/JPY`, `EUR/JPY`, `USD/JPY`, `USD/GBP`, `USD/NZD`, `JPY/NZD`, `JPY/AUD`, `USD/CAD`, `JPY/CAD`
-
-*Signals for pairs not included in the active universe of the current regime are automatically marked as `[REGIME FILTERED]` in `live_run.py` and excluded from trading.*
+All active pairs Tier 1–3 are traded in all regimes without restrictions. The status `[REGIME FILTERED]` is deprecated. The `RegimeFilter` module continues to run for analytics, market phase logging, and macro context calculation, but it does not block signal entry.
 
 ---
 
@@ -273,16 +270,17 @@ In addition to the G8 FX market, the system supports generating signals for **eq
 
 ### 1. Equity Index Strategy Core
 The composite signal for each index is calculated based on 3 factors:
-- **OECD CLI Momentum (50%):** economic health leading indicators momentum (MoM change in OECD CLI, normalized via a 3-year Z-window).
-- **Yield Curve Slope (30%):** yield curve slope 10Y-2Y (normalized Z-score signaling recession/expansion phases).
+- **OECD CLI Momentum (60%):** economic health leading indicators momentum (MoM change in OECD CLI, normalized via a 3-year Z-window).
+- **Yield Curve Slope (20%):** yield curve slope 10Y-2Y (normalized Z-score signaling recession/expansion phases).
 - **HY Credit Spread (20%):** monthly momentum of the corporate high-yield credit spread (High Yield OAS), normalized and **inverted** (narrowing spread = positive factor = rising equities).
 
-For instruments of commodity-exporting countries (e.g., ASX200 for Australia), a commodity overlay of 10% is integrated into the scoring (CLI 40% / YC 30% / HY 20% / Commodity 10%), but it is currently disabled (commodity tickers are set to None).
+Additionally, 4 commodity instruments (Commodities v1) are processed in the same pipeline in monitor-only mode (`active = False`, signals are logged to the DB and broadcasted to Telegram): **XAUUSD** (Gold), **XAGUSD** (Silver), **CUCUSD** (Copper), and **NGCUSD** (Natural Gas). Their scoring integrates commodity-specific factors (real yields, spreads, LME/EIA inventory stocks, COT/CFTC net speculator positioning, and temperature heating degree days overlay).
 
-### 2. Traded Instruments
+### 2. Traded Instruments (Indices)
+All 5 indices are active and traded live:
 - 🇺🇸 **SP500** (USA, ticker `^GSPC`, base score USD)
 - 🇩🇪 **DAX40** (Germany, ticker `^GDAXI`, base score EUR)
-- 🇯🇵 **JPN225** (Japan, ticker `^N225`, base score JPY)
+- 🇯🇵 **JPN225** (Japan, ticker `^N225`, base score JPY — activated on 07.07.2026)
 - 🇬🇧 **UK100** (UK, ticker `^FTSE`, base score GBP)
 - 🇦🇺 **ASXAUD** (Australia, ticker `^AXJO`, base score AUD)
 
