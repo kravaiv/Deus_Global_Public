@@ -40,7 +40,7 @@ graph TD
 
     subgraph SCORING [3. Scoring]
         D2[Sentiment 3pct + Panic + MacroSurprise + RegimeFilter] --> D1
-        D1 -->|Final Composite Score (Point-in-Time)| E_MATRIX[MatrixEngine]
+        D1 -->|"Final Composite Score (Point-in-Time)"| E_MATRIX[MatrixEngine]
     end
 
     subgraph MATRIX [4. Matrix & Filtering]
